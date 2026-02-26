@@ -100,13 +100,7 @@ func GetPodSpecForImageScan(ctx trivyoperator.PluginContext,
 
 	trivyConfigName := trivyoperator.GetPluginConfigMapName(Plugin)
 
-	volumeMounts := []corev1.VolumeMount{
-		{
-			Name:      tmpVolumeName,
-			ReadOnly:  false,
-			MountPath: "/tmp",
-		},
-	}
+	var volumeMounts []corev1.VolumeMount
 	volumes := []corev1.Volume{
 		{
 			Name: tmpVolumeName,
@@ -117,6 +111,7 @@ func GetPodSpecForImageScan(ctx trivyoperator.PluginContext,
 			},
 		},
 	}
+
 	if volume, volumeMount := config.GenerateSslCertDirVolumeIfAvailable(trivyConfigName); volume != nil && volumeMount != nil {
 		volumes = append(volumes, *volume)
 		volumeMounts = append(volumeMounts, *volumeMount)
@@ -238,6 +233,13 @@ func GetPodSpecForImageScan(ctx trivyoperator.PluginContext,
 		if ExcludeImage(ctx.GetTrivyOperatorConfig().ExcludeImages(), c.Image) {
 			continue
 		}
+		containerTmpVolume := corev1.VolumeMount{
+			Name:      tmpVolumeName,
+			ReadOnly:  false,
+			MountPath: "/tmp",
+			SubPath:   c.Name,
+		}
+		containerVolumeMounts := append(volumeMounts, containerTmpVolume)
 		env := []corev1.EnvVar{
 			constructEnvVarSourceFromConfigMap("TRIVY_SEVERITY", trivyConfigName, KeyTrivySeverity),
 			constructEnvVarSourceFromConfigMap("TRIVY_IGNORE_UNFIXED", trivyConfigName, keyTrivyIgnoreUnfixed),
@@ -307,7 +309,7 @@ func GetPodSpecForImageScan(ctx trivyoperator.PluginContext,
 			registryPasswordKey := fmt.Sprintf("%s.password", c.Name)
 			if CheckGcpCrOrPrivateRegistry(c.Image) &&
 				ctx.GetTrivyOperatorConfig().GetScanJobUseGCRServiceAccount() {
-				createEnvandVolumeForGcr(&env, &volumeMounts, &volumes, &registryPasswordKey, &secret.Name)
+				createEnvandVolumeForGcr(&env, &containerVolumeMounts, &volumes, &registryPasswordKey, &secret.Name)
 			} else {
 				env = append(env, corev1.EnvVar{
 					Name: "TRIVY_USERNAME",
@@ -359,7 +361,7 @@ func GetPodSpecForImageScan(ctx trivyoperator.PluginContext,
 				secrets = append(secrets, &secret)
 				fileName := fmt.Sprintf("%s.json", secretName)
 				mountPath := fmt.Sprintf("/sbom-%s", c.Name)
-				CreateVolumeSbomFiles(&volumeMounts, &volumes, &secretName, fileName, mountPath, c.Name)
+				CreateVolumeSbomFiles(&containerVolumeMounts, &volumes, &secretName, fileName, mountPath, c.Name)
 				cmd, args = GetSbomScanCommandAndArgs(ctx, mode, fmt.Sprintf("%s/%s", mountPath, fileName), trivyServerURL, resultFileName)
 			}
 		}
@@ -373,7 +375,7 @@ func GetPodSpecForImageScan(ctx trivyoperator.PluginContext,
 			Args:                     args,
 			Resources:                resourceRequirements,
 			SecurityContext:          securityContext,
-			VolumeMounts:             volumeMounts,
+			VolumeMounts:             containerVolumeMounts,
 		})
 	}
 	return corev1.PodSpec{
